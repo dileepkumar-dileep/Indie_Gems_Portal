@@ -10,12 +10,11 @@ pipeline {
         DOCKERHUB_USER = "diileepkumar"
         DOCKER_CREDS = "docker-cred"
         CONTAINER_PORT = "80"
-        AWS_REGION = "eu-north-1"
-        EKS_CLUSTER = "mycluster"
-        KUBECONFIG = "/var/lib/jenkins/.kube/config"
+        KUBECONFIG_CREDENTIAL_ID = "kubeconfig"   // <-- your uploaded kubeconfig ID
     }
 
     stages {
+
         stage('Checkout Code') {
             steps {
                 dir("${WORK_DIR}") {
@@ -42,9 +41,9 @@ pipeline {
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
-                    sh """
-                        echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
-                    """
+                    sh '''
+                        echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                    '''
                 }
             }
         }
@@ -57,38 +56,36 @@ pipeline {
 
         stage('Update K8s Image') {
             steps {
-                sh '''
-                sed -i "s|image:.*|image: $DOCKERHUB_USER/$IMAGE_NAME:$IMAGE_TAG|" k8s/deployment.yml
-                '''
-            }
-        }
-
-        stage('Configure EKS Access') {
-            steps {
-                sh '''
-                export PATH=$PATH:/usr/local/bin
-                aws eks --region $AWS_REGION update-kubeconfig --name $EKS_CLUSTER
-                /usr/local/bin/kubectl config current-context
-                '''
+                dir("${WORK_DIR}") {
+                    sh '''
+                    sed -i "s|image:.*|image: $DOCKERHUB_USER/$IMAGE_NAME:$IMAGE_TAG|" k8s/deployment.yml
+                    '''
+                }
             }
         }
 
         stage('Deploy to Kubernetes') {
             steps {
-                sh '''
-                kubectl apply -f k8s/deployment.yml
-                kubectl apply -f k8s/service.yml
-                '''
+                dir("${WORK_DIR}") {
+                    withKubeConfig([credentialsId: "${KUBECONFIG_CREDENTIAL_ID}"]) {
+                        sh '''
+                        kubectl apply -f k8s/deployment.yml
+                        kubectl apply -f k8s/service.yml
+                        '''
+                    }
+                }
             }
         }
 
         stage('Verify Deployment') {
             steps {
-                sh '''
-                kubectl rollout status deployment python-devops-app || true
-                kubectl get pods -o wide
-                kubectl get svc
-                '''
+                withKubeConfig([credentialsId: "${KUBECONFIG_CREDENTIAL_ID}"]) {
+                    sh '''
+                    kubectl rollout status deployment python-devops-app || true
+                    kubectl get pods -o wide
+                    kubectl get svc
+                    '''
+                }
             }
         }
     }
